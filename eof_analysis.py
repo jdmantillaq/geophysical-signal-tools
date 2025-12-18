@@ -1,4 +1,4 @@
-def compute_eof(data):
+def eof_decomposition(data):
     """
     Computes Empirical Orthogonal Functions (EOFs) from the given data.
 
@@ -77,7 +77,7 @@ def compute_eof(data):
     return val_prop, vec_prop, eof, var_exp
 
 
-def project_data(data, vec_prop):
+def project_onto_eofs(data, vec_prop):
     """
     Project 3D data onto a subspace defined by a set of eigenvectors.
 

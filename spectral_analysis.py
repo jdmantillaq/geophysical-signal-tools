@@ -1,4 +1,4 @@
-def fourier_bandpass_filter(series, low_period, high_period):
+def bandpass_filter(series, low_period, high_period):
     '''
     Apply a bandpass filter to a time series using the Fourier transform.
 
@@ -31,7 +31,7 @@ def fourier_bandpass_filter(series, low_period, high_period):
     return filtered_series
 
 
-def compute_fourier_spectrum(time_series):
+def compute_power_spectrum(time_series):
     """
     Computes the normalized power spectrum (percentage of variance) of a
     time series using the Fourier transform.
@@ -63,7 +63,7 @@ def compute_fourier_spectrum(time_series):
     return periods, percent_variance
 
 
-def plot_fourier_spectra(serie):
+def plot_power_spectrum(serie):
     """
     Plots the Fourier spectra of a time series.
 
@@ -76,7 +76,7 @@ def plot_fourier_spectra(serie):
     import matplotlib.pyplot as plt
 
     # Compute spectrum using the dedicated function
-    periods, percent_variance = compute_fourier_spectrum(serie)
+    periods, percent_variance = compute_power_spectrum(serie)
 
     # Plot the magnitude of the FFT
     fig = plt.figure()
@@ -90,8 +90,7 @@ def plot_fourier_spectra(serie):
 
     return fig
 
-def remove_seasonal_with_harmonics_vectorized(data, n_harmonics=4,
-                                              year_period=365.25):
+def compute_harmonic_anomalies(data, n_harmonics=4, year_period=365.25):
     """
     Remove seasonal cycle using harmonic regression (vectorized version).
     
