@@ -68,28 +68,24 @@ def plot_fourier_spectra(serie):
     Plots the Fourier spectra of a time series.
 
     Args:
-      series (array of int) - contains the measurements for each time step
-    """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    serie = serie - serie.mean()
+      serie (array-like): Input time series data.
 
-    # Compute the corresponding frequencies
-    freq = np.fft.fftfreq(len(serie), 1)
-    period = 1/freq
-    fourier = np.fft.fft(serie)
-    amplitud = np.abs(fourier)
-    power = (amplitud ** 2)
-    power_1 = (power/np.sum(power)) * np.var(serie)
-    porcen_var = power_1 / np.var(serie) * 100.
+    Returns:
+      matplotlib.figure.Figure: The figure object containing the plot.
+    """
+    import matplotlib.pyplot as plt
+
+    # Compute spectrum using the dedicated function
+    periods, percent_variance = compute_fourier_spectrum(serie)
 
     # Plot the magnitude of the FFT
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    plt.plot(period, porcen_var*2, color='k')
+    plt.plot(periods, percent_variance * 2, color='k')
     ax.set_xscale('log', base=10)
     plt.xlabel('Period')
     plt.ylabel('Magnitude [variance]')
     plt.title('Fourier Spectra')
     plt.grid(True)
-    plt.show()
+
+    return fig
