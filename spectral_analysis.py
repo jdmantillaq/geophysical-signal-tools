@@ -89,3 +89,112 @@ def plot_fourier_spectra(serie):
     plt.grid(True)
 
     return fig
+
+def remove_seasonal_with_harmonics_vectorized(data, n_harmonics=4,
+                                              year_period=365.25):
+    """
+    Remove seasonal cycle using harmonic regression (vectorized version).
+    
+    Parameters:
+    -----------
+    data : ndarray
+        3D array with shape (time, lat, lon)
+    n_harmonics : int
+        Number of harmonics to remove (default: 4)
+    year_period : float
+        Period of the seasonal cycle (default: 365.25 days)
+    
+    Returns:
+    --------
+    anomalies : ndarray
+        Data with seasonal cycle and harmonics removed, same shape as input
+    """
+    import numpy as np
+    import time
+
+    print("=" * 60)
+    print("Removing seasonal cycle with harmonic regression")
+    print("=" * 60)
+    start_time = time.time()
+    
+    print(f"\nInput configuration:")
+    print(f"  Data shape: {data.shape} (time={data.shape[0]}, lat={data.shape[1]}, lon={data.shape[2]})")
+    print(f"  Harmonics: {n_harmonics}")
+    print(f"  Year period: {year_period} days")
+    
+    # Store original shape
+    orig_shape = data.shape
+    n_time = orig_shape[0]
+    
+    # Reshape to (time, space) for vectorized operations
+    data_2d = data.reshape(n_time, -1)
+    n_space = data_2d.shape[1]
+    
+    print(f"\nProcessing:")
+    print(f"  Reshaped to: {data_2d.shape} (time x space)")
+    
+    # Build design matrix once (same for all spatial points)
+    t = np.arange(n_time)
+    X = np.ones((n_time, 1 + 2*n_harmonics))
+    
+    for h in range(1, n_harmonics + 1):
+        X[:, 2*h-1] = np.cos(2*np.pi*h*t / year_period)
+        X[:, 2*h] = np.sin(2*np.pi*h*t / year_period)
+    
+    print(f"  Design matrix: {X.shape} (time x features)")
+    
+    # Handle NaN values - identify valid points
+    valid_points = ~np.all(np.isnan(data_2d), axis=0)
+    n_valid = np.sum(valid_points)
+    pct_valid = 100 * n_valid / n_space
+    
+    print(f"  Valid spatial points: {n_valid:,}/{n_space:,} ({pct_valid:.1f}%)")
+    
+    # Initialize output
+    data_anomalies_2d = np.full_like(data_2d, np.nan)
+    
+    if n_valid > 0:
+        # Extract valid data
+        data_valid = data_2d[:, valid_points]
+        
+        # For each valid point, handle any remaining NaN in time series
+        # If all points are complete, we can do a single lstsq
+        if not np.any(np.isnan(data_valid)):
+            print(f"\n  Status: Complete data - vectorized solve")
+            # Single least squares solve for all spatial points at once
+            coeffs = np.linalg.lstsq(X, data_valid, rcond=None)[0]
+            seasonal_component = X @ coeffs
+            data_anomalies_2d[:, valid_points] = data_valid - seasonal_component
+            print(f"  ✓ Solved for all {n_valid:,} points simultaneously")
+        else:
+            nan_count = np.sum(np.isnan(data_valid))
+            print(f"\n  Status: Sparse data ({nan_count:,} missing values) - point-wise solve")
+            # Need to handle NaN values point by point
+            processed = 0
+            for i in range(data_valid.shape[1]):
+                point_data = data_valid[:, i]
+                valid_time = ~np.isnan(point_data)
+                
+                if np.sum(valid_time) >= X.shape[1]:  # enough data points
+                    coeffs = np.linalg.lstsq(X[valid_time],
+                                             point_data[valid_time],
+                                             rcond=None)[0]
+                    seasonal = X @ coeffs
+                    data_anomalies_2d[valid_time, valid_points][:, i] = \
+                        point_data[valid_time] - seasonal[valid_time]
+                    processed += 1
+                
+                if (i + 1) % 100 == 0:
+                    print(f"    Progress: {i+1:,}/{data_valid.shape[1]:,} processed")
+            
+            print(f"  ✓ Solved for {processed:,} / {data_valid.shape[1]:,} points")
+    
+    # Reshape back to original shape
+    data_anomalies = data_anomalies_2d.reshape(orig_shape)
+    
+    elapsed = time.time() - start_time
+    print(f"\n{'=' * 60}")
+    print(f"Completed in {elapsed:.2f} seconds")
+    print(f"{'=' * 60}\n")
+    
+    return data_anomalies
