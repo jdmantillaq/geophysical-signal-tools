@@ -1,11 +1,12 @@
 def bandpass_filter(series, low_period, high_period):
     '''
     Apply a bandpass filter to a time series using the Fourier transform.
+    Keeps frequencies corresponding to periods between low_period and high_period.
 
     Parameters:
         series (array-like): Input time series data.
-        low_period (float): Lower bound of the period (inclusive).
-        high_period (float): Upper bound of the period (inclusive).
+        low_period (float): Lower bound of the period (shorter period, higher frequency).
+        high_period (float): Upper bound of the period (longer period, lower frequency).
 
     Returns:
         np.ndarray: Filtered time series.
@@ -16,14 +17,76 @@ def bandpass_filter(series, low_period, high_period):
     detrended_series = series - mean_value
 
     freqs = np.fft.fftfreq(len(detrended_series), sampling_interval)
-    periods = 1 / freqs
+    # Handle division by zero
+    periods = np.where(freqs != 0, 1 / np.abs(freqs), np.inf)
 
-    # Mask frequencies outside the desired period band
-    filter_mask = (np.abs(periods) >= low_period) & (
-        np.abs(periods) <= high_period)
+    # Keep frequencies with periods in [low_period, high_period]
+    filter_mask = (periods >= low_period) & (periods <= high_period)
 
     fourier_coeffs = np.fft.fft(detrended_series)
     fourier_coeffs[~filter_mask] = 0
+
+    filtered_series = np.fft.ifft(fourier_coeffs).real
+    filtered_series += mean_value
+
+    return filtered_series
+
+def lowpass_filter(series, cutoff_period):
+    '''
+    Apply a lowpass filter to a time series using the Fourier transform.
+    It passes signals with a frequency lower than a selected cutoff frequency
+    and attenuates signals with frequencies higher than the cutoff frequency.
+
+    Parameters:
+        series (array-like): Input time series data.
+        cutoff_period (float): Cutoff period for the lowpass filter.
+
+    Returns:
+        np.ndarray: Filtered time series.
+    '''
+    import numpy as np
+    sampling_interval = 1
+    mean_value = np.mean(series)
+    detrended_series = series - mean_value
+
+    freqs = np.fft.fftfreq(len(detrended_series), sampling_interval)
+    periods = 1 / np.where(freqs != 0, freqs, np.inf)  # Handle division by zero
+
+    # Mask frequencies with periods SHORTER than cutoff (higher frequencies)
+    filter_mask = np.abs(periods) < cutoff_period
+
+    fourier_coeffs = np.fft.fft(detrended_series)
+    fourier_coeffs[filter_mask] = 0  # Remove high frequencies
+
+    filtered_series = np.fft.ifft(fourier_coeffs).real
+    filtered_series += mean_value
+
+    return filtered_series
+
+def highpass_filter(series, cutoff_period):
+    '''
+    Apply a highpass filter to a time series using the Fourier transform.
+
+    Parameters:
+        series (array-like): Input time series data.
+        cutoff_period (float): Cutoff period for the highpass filter.
+
+    Returns:
+        np.ndarray: Filtered time series.
+    '''
+    import numpy as np
+    sampling_interval = 1
+    mean_value = np.mean(series)
+    detrended_series = series - mean_value
+
+    freqs = np.fft.fftfreq(len(detrended_series), sampling_interval)
+    periods = 1 / np.where(freqs != 0, freqs, np.inf)
+
+    # Mask frequencies below the cutoff period
+    filter_mask = np.abs(periods) > cutoff_period
+
+    fourier_coeffs = np.fft.fft(detrended_series)
+    fourier_coeffs[filter_mask] = 0
 
     filtered_series = np.fft.ifft(fourier_coeffs).real
     filtered_series += mean_value
