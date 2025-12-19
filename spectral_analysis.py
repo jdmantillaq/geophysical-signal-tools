@@ -93,6 +93,139 @@ def highpass_filter(series, cutoff_period):
 
     return filtered_series
 
+def highpass_filter_3d(data, cutoff_period):
+    """
+    Apply highpass filter to 3D array using Fourier transform (vectorized version).
+    
+    Parameters:
+    -----------
+    data : ndarray
+        3D array with shape (time, lat, lon)
+    cutoff_period : float
+        Cutoff period for the highpass filter (in time units)
+    
+    Returns:
+    --------
+    filtered_data : ndarray
+        Highpass filtered data, same shape as input
+    """
+    import numpy as np
+    import time
+
+    print("=" * 60)
+    print("Applying highpass filter")
+    print("=" * 60)
+    start_time = time.time()
+    
+    print(f"\nInput configuration:")
+    print(f"  Data shape: {data.shape} (time={data.shape[0]}, lat={data.shape[1]}, lon={data.shape[2]})")
+    print(f"  Cutoff period: {cutoff_period} time units")
+    
+    # Store original shape
+    orig_shape = data.shape
+    n_time = orig_shape[0]
+    
+    # Reshape to (time, space) for vectorized operations
+    data_2d = data.reshape(n_time, -1)
+    n_space = data_2d.shape[1]
+    
+    print(f"\nProcessing:")
+    print(f"  Reshaped to: {data_2d.shape} (time x space)")
+    
+    # Setup filter once (same for all spatial points)
+    sampling_interval = 1
+    freqs = np.fft.fftfreq(n_time, sampling_interval)
+    periods = 1 / np.where(freqs != 0, np.abs(freqs), np.inf)
+    
+    # Mask frequencies with periods longer than cutoff (lower frequencies)
+    filter_mask = np.abs(periods) > cutoff_period
+    
+    print(f"  Frequencies to remove: {np.sum(filter_mask)} / {len(filter_mask)}")
+    
+    # Handle NaN values - identify valid points
+    valid_points = ~np.all(np.isnan(data_2d), axis=0)
+    n_valid = np.sum(valid_points)
+    pct_valid = 100 * n_valid / n_space
+    
+    print(f"  Valid spatial points: {n_valid:,}/{n_space:,} ({pct_valid:.1f}%)")
+    
+    # Initialize output
+    filtered_data_2d = np.full_like(data_2d, np.nan)
+    
+    if n_valid > 0:
+        # Extract valid data
+        data_valid = data_2d[:, valid_points]
+        
+        # Check if data is complete (no NaN in time series)
+        if not np.any(np.isnan(data_valid)):
+            print(f"\n  Status: Complete data - vectorized filtering")
+            
+            # Remove mean for each spatial point
+            mean_values = np.mean(data_valid, axis=0)
+            detrended_data = data_valid - mean_values
+            
+            # Apply FFT to all spatial points at once
+            fourier_coeffs = np.fft.fft(detrended_data, axis=0)
+            
+            # Apply filter mask (broadcast across spatial dimension)
+            fourier_coeffs[filter_mask, :] = 0
+            
+            # Inverse FFT
+            filtered_valid = np.fft.ifft(fourier_coeffs, axis=0).real
+            
+            # Add mean back
+            filtered_valid += mean_values
+            
+            filtered_data_2d[:, valid_points] = filtered_valid
+            print(f"  ✓ Filtered all {n_valid:,} points simultaneously")
+        else:
+            nan_count = np.sum(np.isnan(data_valid))
+            print(f"\n  Status: Sparse data ({nan_count:,} missing values) - point-wise filtering")
+            
+            # Need to handle NaN values point by point
+            processed = 0
+            for i in range(data_valid.shape[1]):
+                point_data = data_valid[:, i]
+                valid_time = ~np.isnan(point_data)
+                
+                if np.sum(valid_time) > 10:  # need enough points for filtering
+                    # Extract valid time points
+                    valid_series = point_data[valid_time]
+                    
+                    # Apply highpass filter to this series
+                    mean_value = np.mean(valid_series)
+                    detrended_series = valid_series - mean_value
+                    
+                    # Create filter for this length
+                    n_valid_time = len(valid_series)
+                    freqs_i = np.fft.fftfreq(n_valid_time, sampling_interval)
+                    periods_i = 1 / np.where(freqs_i != 0, np.abs(freqs_i), np.inf)
+                    filter_mask_i = np.abs(periods_i) > cutoff_period
+                    
+                    # Apply filter
+                    fourier_coeffs_i = np.fft.fft(detrended_series)
+                    fourier_coeffs_i[filter_mask_i] = 0
+                    filtered_series = np.fft.ifft(fourier_coeffs_i).real + mean_value
+                    
+                    # Store back
+                    filtered_data_2d[valid_time, valid_points][:, i] = filtered_series
+                    processed += 1
+                
+                if (i + 1) % 100 == 0:
+                    print(f"    Progress: {i+1:,}/{data_valid.shape[1]:,} processed")
+            
+            print(f"  ✓ Filtered {processed:,} / {data_valid.shape[1]:,} points")
+    
+    # Reshape back to original shape
+    filtered_data = filtered_data_2d.reshape(orig_shape)
+    
+    elapsed = time.time() - start_time
+    print(f"\n{'=' * 60}")
+    print(f"Completed in {elapsed:.2f} seconds")
+    print(f"{'=' * 60}\n")
+    
+    return filtered_data
+
 
 def compute_power_spectrum(time_series):
     """
