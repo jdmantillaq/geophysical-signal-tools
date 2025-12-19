@@ -63,7 +63,7 @@ def compute_power_spectrum(time_series):
     return periods, percent_variance
 
 
-def plot_power_spectrum(serie, log_scale=False):
+def plot_power_spectrum(serie):
     """
     Plots the Fourier spectra of a time series.
 
@@ -81,13 +81,12 @@ def plot_power_spectrum(serie, log_scale=False):
     # Plot the magnitude of the FFT
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    plt.plot(periods, percent_variance * 2, color='k')
-    if log_scale:
-        ax.set_xscale('log', base=10)
-    plt.xlabel('Period')
-    plt.ylabel('Magnitude [variance]')
-    plt.title('Fourier Spectra')
-    plt.grid(True)
+    ax.plot(periods, percent_variance * 2, color='k')
+    ax.set_xscale('log', base=10)
+    ax.set_xlabel('Period')
+    ax.set_ylabel('Magnitude [variance]')
+    ax.set_title('Fourier Spectra')
+    ax.grid(True)
 
     return fig, ax
 
