@@ -84,7 +84,7 @@ def plot_power_spectrum(serie):
     ax.plot(periods, percent_variance * 2, color='k')
     ax.set_xscale('log', base=10)
     ax.set_xlabel('Period')
-    ax.set_ylabel('Magnitude [variance]')
+    ax.set_ylabel('Explained variance [%]')
     ax.set_title('Fourier Spectra')
     ax.grid(True)
 
