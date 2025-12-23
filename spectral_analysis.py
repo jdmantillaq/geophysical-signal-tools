@@ -1,3 +1,4 @@
+#%%
 def bandpass_filter(series, low_period, high_period):
     '''
     Apply a bandpass filter to a time series using the Fourier transform.
@@ -701,7 +702,8 @@ def compute_harmonic_anomalies(data, n_harmonics=4, year_period=365.25):
     return data_anomalies
 
 
-def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25, method='normal'):
+def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
+                                   method='normal'):
     """
     Remove seasonal cycle using harmonic regression (vectorized version).
     
@@ -840,3 +842,28 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25, meth
     print(f"{'=' * 60}\n")
     
     return anomalies
+
+
+if __name__ == "__main__":
+    # Example usage or test cases can be added here
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import xarray as xr
+    
+    olr_xr = xr.open_dataset('olr.day.mean_1979_2000_30S30N.nc')
+    
+    anomalies_normal = remove_seasonal_cycle_harmonic(olr_xr['olr'].values,
+                                               n_harmonics=4,
+                                               year_period=365.25,
+                                               method='normal')
+    
+
+    
+    anomalies_xr = xr.DataArray(anomalies_normal,
+                               coords=olr_xr['olr'].coords,
+                               dims=olr_xr['olr'].dims)
+    anomalies_xr.name = 'olr'
+    anomalies_xr.attrs = olr_xr['olr'].attrs    
+    anomalies_xr[0].plot()
+
+#%%
