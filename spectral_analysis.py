@@ -820,7 +820,8 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
                         coeffs = np.linalg.lstsq(X_valid, y_valid, rcond=None)[0]
                         seasonal = np.dot(X_valid, coeffs)
                     else:  # method == 'normal'
-                        # Normal equation: C = (X^T X)^-1 X^T y
+                        # Solve Normal equation: C = (X^T X)^-1 X^T y 
+                        #   to get harmonic coefficients.
                         XtX_inv = np.linalg.inv(np.dot(X_valid.T, X_valid))
                         coeffs = np.dot(XtX_inv, np.dot(X_valid.T, y_valid))
                         seasonal = np.dot(X_valid, coeffs)
