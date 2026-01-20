@@ -733,9 +733,9 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
     if method not in ['lstsq', 'normal']:
         raise ValueError(f"method must be 'lstsq' or 'normal', got '{method}'")
 
-    print("=" * 70)
+    print("=" * 80)
     print(f"Removing seasonal cycle with harmonic regression ({method} method)")
-    print("=" * 70)
+    print("=" * 80)
     start_time = time.time()
     
     print(f"\nInput configuration:")
@@ -838,9 +838,9 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
     anomalies = anomalies_2d.reshape(orig_shape)
     
     elapsed = time.time() - start_time
-    print(f"\n{'=' * 60}")
+    print(f"\n{'=' * 80}")
     print(f"Completed in {elapsed:.2f} seconds")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 80}\n")
     
     return anomalies
 
