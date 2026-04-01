@@ -844,6 +844,59 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
     
     return anomalies
 
+def remove_linear_variability(y, x):
+    """Remove the linear component of y related to a time index.
+
+    Parameters
+    ----------
+    y : array-like
+        Data with time on axis 0. Supported shapes:
+        - (time,) for a single time series
+        - (time, lat, lon) for a 3D field
+    x : array-like, shape (time,)
+        Predictor/index time series used to regress out linear variability.
+
+    Returns
+    -------
+    residual : ndarray
+        y with the linearly related component removed.
+    signal : ndarray, optional
+        Reconstructed linear signal related to the index.
+    beta : float or ndarray, optional
+        Regression slope(s): scalar for 1D y, map for 3D y.
+    """
+    y = np.asarray(y, dtype=float)
+    x = np.asarray(x, dtype=float)
+
+    if y.ndim not in (1, 3):
+        raise ValueError('y must be either 1D (time,) or 3D (time, lat, lon).')
+    if x.ndim != 1:
+        raise ValueError('index must be a 1D array with shape (time,).')
+    if y.shape[0] != x.shape[0]:
+        raise ValueError('Time dimension mismatch between y and index.')
+
+    # Center index and compute variance used by least-squares slope.
+    x = x - np.nanmean(x)
+    var_x = np.nanmean(x**2)
+    if var_x == 0 or np.isnan(var_x):
+        raise ValueError('index variance is zero or NaN; cannot regress out signal.')
+
+    if y.ndim == 1:
+        y_mean = np.nanmean(y)
+        cov_xy = np.nanmean(x * (y - y_mean))
+        beta = cov_xy / var_x
+        signal = x * beta
+        residual = y - signal
+    else:
+        y_mean = np.nanmean(y, axis=0, keepdims=True)
+        x_view = x[:, None, None]
+        cov_xy = np.nanmean(x_view * (y - y_mean), axis=0)
+        beta = cov_xy / var_x
+        signal = x_view * beta
+        residual = y - signal
+
+    return residual, signal, beta
+
 
 if __name__ == "__main__":
     # Example usage or test cases can be added here
