@@ -702,6 +702,148 @@ def compute_harmonic_anomalies(data, n_harmonics=4, year_period=365.25):
     return data_anomalies
 
 
+# def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
+#                                    method='normal'):
+#     """
+#     Remove seasonal cycle using harmonic regression (vectorized version).
+    
+#     This method fits sine/cosine harmonics to the data and removes the
+#     fitted seasonal component, leaving anomalies.
+    
+#     Parameters:
+#     -----------
+#     data : ndarray
+#         3D array with shape (time, lat, lon)
+#     n_harmonics : int
+#         Number of harmonic pairs (sin/cos) to fit (default: 4)
+#     year_period : float
+#         Period of the seasonal cycle in time units (default: 365.25 days)
+#     method : str
+#         Solver method: 'lstsq' for least squares (default) or 'normal' for normal equation
+    
+#     Returns:
+#     --------
+#     anomalies : ndarray
+#         Data with seasonal cycle removed, same shape as input
+#     """
+#     import numpy as np
+#     import time
+
+#     # Validate method parameter
+#     if method not in ['lstsq', 'normal']:
+#         raise ValueError(f"method must be 'lstsq' or 'normal', got '{method}'")
+
+#     print("=" * 80)
+#     print(f"Removing seasonal cycle with harmonic regression ({method} method)")
+#     print("=" * 80)
+#     start_time = time.time()
+    
+#     print(f"\nInput configuration:")
+#     print(f"  Data shape: {data.shape} (time={data.shape[0]}, lat={data.shape[1]}, lon={data.shape[2]})")
+#     print(f"  Harmonics: {n_harmonics}")
+#     print(f"  Year period: {year_period} time units")
+#     print(f"  Method: {method}")
+    
+#     # Store original shape
+#     orig_shape = data.shape
+#     n_time = orig_shape[0]
+    
+#     # Reshape to (time, space) for vectorized operations
+#     data_2d = data.reshape(n_time, -1)
+#     n_space = data_2d.shape[1]
+    
+#     print(f"\nProcessing:")
+#     print(f"  Reshaped to: {data_2d.shape} (time x space)")
+    
+#     # Build design matrix (same for all spatial points)
+#     t = np.arange(n_time)
+#     X = np.ones((n_time, 2*n_harmonics + 1))
+    
+#     j = 1
+#     for i in range(1, n_harmonics + 1):
+#         X[:, j] = np.sin(i * 2 * np.pi * t / year_period)
+#         X[:, j+1] = np.cos(i * 2 * np.pi * t / year_period)
+#         j += 2
+    
+#     print(f"  Design matrix: {X.shape} (time x features: 1 constant + {2*n_harmonics} harmonics)")
+    
+#     # Handle NaN values - identify valid points
+#     valid_points = ~np.all(np.isnan(data_2d), axis=0)
+#     n_valid = np.sum(valid_points)
+#     pct_valid = 100 * n_valid / n_space
+    
+#     print(f"  Valid spatial points: {n_valid:,}/{n_space:,} ({pct_valid:.1f}%)")
+    
+#     # Initialize output
+#     anomalies_2d = np.full_like(data_2d, np.nan)
+    
+#     if n_valid > 0:
+#         # Extract valid data
+#         data_valid = data_2d[:, valid_points]
+        
+#         # Check if data is complete (no NaN in time series)
+#         if not np.any(np.isnan(data_valid)):
+#             print(f"\n  Status: Complete data - vectorized regression")
+            
+#             # Solve using selected method
+#             if method == 'lstsq':
+#                 # Least squares method
+#                 coeffs = np.linalg.lstsq(X, data_valid, rcond=None)[0]
+#                 seasonal_component = np.dot(X, coeffs)
+#             else:  # method == 'normal'
+#                 # Normal equation: C = (X^T X)^-1 X^T data_valid
+#                 XtX_inv = np.linalg.inv(np.dot(X.T, X))
+#                 coeffs = np.dot(XtX_inv, np.dot(X.T, data_valid))
+#                 seasonal_component = np.dot(X, coeffs)
+            
+#             anomalies_2d[:, valid_points] = data_valid - seasonal_component
+#             print(f"  ✓ Processed all {n_valid:,} points simultaneously")
+#         else:
+#             nan_count = np.sum(np.isnan(data_valid))
+#             print(f"\n  Status: Sparse data ({nan_count:,} missing values) - point-wise regression")
+            
+#             # Need to handle NaN values point by point
+#             processed = 0
+#             for i in range(data_valid.shape[1]):
+#                 point_data = data_valid[:, i]
+#                 valid_time = ~np.isnan(point_data)
+                
+#                 # Need enough data points to fit the model
+#                 if np.sum(valid_time) >= X.shape[1]:
+#                     # Fit regression on valid time points only
+#                     X_valid = X[valid_time, :]
+#                     y_valid = point_data[valid_time]
+                    
+#                     # Solve using selected method
+#                     if method == 'lstsq':
+#                         # Least squares method
+#                         coeffs = np.linalg.lstsq(X_valid, y_valid, rcond=None)[0]
+#                         seasonal = np.dot(X_valid, coeffs)
+#                     else:  # method == 'normal'
+#                         # Solve Normal equation: C = (X^T X)^-1 X^T y 
+#                         #   to get harmonic coefficients.
+#                         XtX_inv = np.linalg.inv(np.dot(X_valid.T, X_valid))
+#                         coeffs = np.dot(XtX_inv, np.dot(X_valid.T, y_valid))
+#                         seasonal = np.dot(X_valid, coeffs)
+                    
+#                     anomalies_2d[valid_time, valid_points][:, i] = y_valid - seasonal
+#                     processed += 1
+                
+#                 if (i + 1) % 100 == 0:
+#                     print(f"    Progress: {i+1:,}/{data_valid.shape[1]:,} processed")
+            
+#             print(f"  ✓ Processed {processed:,} / {data_valid.shape[1]:,} points")
+    
+#     # Reshape back to original shape
+#     anomalies = anomalies_2d.reshape(orig_shape)
+    
+#     elapsed = time.time() - start_time
+#     print(f"\n{'=' * 80}")
+#     print(f"Completed in {elapsed:.2f} seconds")
+#     print(f"{'=' * 80}\n")
+    
+#     return anomalies
+
 def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
                                    method='normal'):
     """
@@ -787,11 +929,9 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
             
             # Solve using selected method
             if method == 'lstsq':
-                # Least squares method
                 coeffs = np.linalg.lstsq(X, data_valid, rcond=None)[0]
                 seasonal_component = np.dot(X, coeffs)
             else:  # method == 'normal'
-                # Normal equation: C = (X^T X)^-1 X^T data_valid
                 XtX_inv = np.linalg.inv(np.dot(X.T, X))
                 coeffs = np.dot(XtX_inv, np.dot(X.T, data_valid))
                 seasonal_component = np.dot(X, coeffs)
@@ -802,7 +942,9 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
             nan_count = np.sum(np.isnan(data_valid))
             print(f"\n  Status: Sparse data ({nan_count:,} missing values) - point-wise regression")
             
-            # Need to handle NaN values point by point
+            # Pre-compute scalar spatial indices for direct assignment
+            valid_indices = np.where(valid_points)[0]
+            
             processed = 0
             for i in range(data_valid.shape[1]):
                 point_data = data_valid[:, i]
@@ -810,29 +952,20 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
                 
                 # Need enough data points to fit the model
                 if np.sum(valid_time) >= X.shape[1]:
-                    # Fit regression on valid time points only
                     X_valid = X[valid_time, :]
                     y_valid = point_data[valid_time]
                     
-                    # Solve using selected method
                     if method == 'lstsq':
-                        # Least squares method
                         coeffs = np.linalg.lstsq(X_valid, y_valid, rcond=None)[0]
-                        seasonal = np.dot(X_valid, coeffs)
                     else:  # method == 'normal'
-                        # Solve Normal equation: C = (X^T X)^-1 X^T y 
-                        #   to get harmonic coefficients.
                         XtX_inv = np.linalg.inv(np.dot(X_valid.T, X_valid))
                         coeffs = np.dot(XtX_inv, np.dot(X_valid.T, y_valid))
-                        seasonal = np.dot(X_valid, coeffs)
                     
-                    anomalies_2d[valid_time, valid_points][:, i] = y_valid - seasonal
+                    seasonal = np.dot(X_valid, coeffs)
+                    
+                    # Use scalar spatial index to avoid boolean broadcasting error
+                    anomalies_2d[valid_time, valid_indices[i]] = y_valid - seasonal
                     processed += 1
-                
-                if (i + 1) % 100 == 0:
-                    print(f"    Progress: {i+1:,}/{data_valid.shape[1]:,} processed")
-            
-            print(f"  ✓ Processed {processed:,} / {data_valid.shape[1]:,} points")
     
     # Reshape back to original shape
     anomalies = anomalies_2d.reshape(orig_shape)
@@ -844,18 +977,17 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
     
     return anomalies
 
-def remove_linear_variability(y, x):
+def remove_linear_variability(x, y):
     """Remove the linear component of y related to a time index.
 
     Parameters
     ----------
+    x : array-like, shape (time,)
+        Predictor/index time series used to regress out linear variability.
     y : array-like
         Data with time on axis 0. Supported shapes:
         - (time,) for a single time series
         - (time, lat, lon) for a 3D field
-    x : array-like, shape (time,)
-        Predictor/index time series used to regress out linear variability.
-
     Returns
     -------
     residual : ndarray
@@ -865,6 +997,7 @@ def remove_linear_variability(y, x):
     beta : float or ndarray, optional
         Regression slope(s): scalar for 1D y, map for 3D y.
     """
+    import numpy as np
     y = np.asarray(y, dtype=float)
     x = np.asarray(x, dtype=float)
 
@@ -897,6 +1030,56 @@ def remove_linear_variability(y, x):
 
     return residual, signal, beta
 
+def remove_trailing_mean(data, window=120):
+    """
+    Remove interannual/decadal variability and trends by subtracting a trailing
+    mean at each time step (vectorized via cumsum).
+
+    For each time t, subtracts the mean of days [t-window, t-1] from data[t].
+    The first `window` time steps are set to NaN as there is insufficient
+    prior data to compute the mean.
+
+    Parameters:
+    -----------
+    data : ndarray
+        3D array with shape (time, lat, lon)
+    window : int
+        Number of prior days to average (default: 120)
+
+    Returns:
+    --------
+    filtered : ndarray
+        Data with trailing mean removed, same shape as input.
+        First `window` time steps will be NaN.
+    """
+    import numpy as np
+
+    n_time = data.shape[0]
+
+    # Replace NaN with 0 for summation; track valid counts separately
+    nan_mask = np.isnan(data)
+    data_filled = np.where(nan_mask, 0.0, data)
+    valid = (~nan_mask).astype(float)
+
+    # Cumulative sums along time axis, prepend a zero slice so that
+    # cumsum_padded[t] = sum(data[0:t]), making window subtraction clean
+    zero = np.zeros((1,) + data.shape[1:])
+    cumsum  = np.concatenate([zero, np.cumsum(data_filled, axis=0)], axis=0)
+    cumcount = np.concatenate([zero, np.cumsum(valid,       axis=0)], axis=0)
+
+    # sum(data[t-window : t]) = cumsum[t] - cumsum[t-window]
+    # for t = window, window+1, ..., n_time-1
+    trailing_sum   = cumsum[window:n_time]   - cumsum[:n_time - window]
+    trailing_count = cumcount[window:n_time] - cumcount[:n_time - window]
+
+    # Avoid division by zero where the entire window is NaN
+    trailing_mean = np.where(trailing_count > 0, trailing_sum / trailing_count, np.nan)
+
+    # Subtract; NaNs in data[window:] are preserved naturally (NaN - x = NaN)
+    filtered = np.full_like(data, np.nan)
+    filtered[window:] = data[window:] - trailing_mean
+
+    return filtered
 
 if __name__ == "__main__":
     # Example usage or test cases can be added here
