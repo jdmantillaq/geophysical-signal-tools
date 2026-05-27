@@ -978,55 +978,99 @@ def remove_seasonal_cycle_harmonic(data, n_harmonics=4, year_period=365.25,
     return anomalies
 
 def remove_linear_variability(x, y):
-    """Remove the linear component of y related to a time index.
+    """Remove the linear component of y explained by one or more indices.
 
     Parameters
     ----------
-    x : array-like, shape (time,)
+    x : array-like, shape (time,) or (time, n_predictors)
         Predictor/index time series used to regress out linear variability.
     y : array-like
         Data with time on axis 0. Supported shapes:
         - (time,) for a single time series
         - (time, lat, lon) for a 3D field
+
     Returns
     -------
     residual : ndarray
         y with the linearly related component removed.
-    signal : ndarray, optional
-        Reconstructed linear signal related to the index.
-    beta : float or ndarray, optional
-        Regression slope(s): scalar for 1D y, map for 3D y.
+    signal : ndarray
+        Reconstructed linear signal related to x.
+    beta : ndarray
+        Regression coefficient(s):
+        - shape (n_predictors,) for 1D y
+        - shape (n_predictors, lat, lon) for 3D y
     """
     import numpy as np
+
     y = np.asarray(y, dtype=float)
     x = np.asarray(x, dtype=float)
 
     if y.ndim not in (1, 3):
         raise ValueError('y must be either 1D (time,) or 3D (time, lat, lon).')
-    if x.ndim != 1:
-        raise ValueError('index must be a 1D array with shape (time,).')
-    if y.shape[0] != x.shape[0]:
-        raise ValueError('Time dimension mismatch between y and index.')
 
-    # Center index and compute variance used by least-squares slope.
-    x = x - np.nanmean(x)
-    var_x = np.nanmean(x**2)
-    if var_x == 0 or np.isnan(var_x):
-        raise ValueError('index variance is zero or NaN; cannot regress out signal.')
+    if x.ndim == 1:
+        x = x[:, None]
+    elif x.ndim != 2:
+        raise ValueError('x must be 1D (time,) or 2D (time, n_predictors).')
+
+    n_time = y.shape[0]
+    if x.shape[0] != n_time:
+        raise ValueError('Time dimension mismatch between y and x.')
+
+    # Require predictor values at all times; if needed, pre-fill before call.
+    if np.isnan(x).any():
+        raise ValueError('x contains NaN values; please fill or remove them before regression.')
+
+    # Remove predictor means so beta captures anomalies, then solve in least squares sense.
+    x_centered = x - np.mean(x, axis=0, keepdims=True)
+    xtx = x_centered.T @ x_centered
+    if np.linalg.matrix_rank(xtx) < xtx.shape[0]:
+        raise ValueError('Predictors are rank-deficient; cannot estimate unique coefficients.')
 
     if y.ndim == 1:
+        valid = ~np.isnan(y)
+        if np.sum(valid) <= x_centered.shape[1]:
+            raise ValueError('Not enough valid samples in y to fit regression.')
+
         y_mean = np.nanmean(y)
-        cov_xy = np.nanmean(x * (y - y_mean))
-        beta = cov_xy / var_x
-        signal = x * beta
+        y_centered = y - y_mean
+
+        beta = np.linalg.lstsq(x_centered[valid, :], y_centered[valid], rcond=None)[0]
+        signal = x_centered @ beta
         residual = y - signal
     else:
-        y_mean = np.nanmean(y, axis=0, keepdims=True)
-        x_view = x[:, None, None]
-        cov_xy = np.nanmean(x_view * (y - y_mean), axis=0)
-        beta = cov_xy / var_x
-        signal = x_view * beta
-        residual = y - signal
+        y_shape = y.shape
+        y_2d = y.reshape(n_time, -1)
+        n_space = y_2d.shape[1]
+
+        signal_2d = np.full_like(y_2d, np.nan)
+        beta_2d = np.full((x_centered.shape[1], n_space), np.nan)
+
+        # Fast path when no NaNs are present in y.
+        if not np.isnan(y_2d).any():
+            y_mean = np.mean(y_2d, axis=0, keepdims=True)
+            y_centered = y_2d - y_mean
+            beta_2d = np.linalg.lstsq(x_centered, y_centered, rcond=None)[0]
+            signal_2d = x_centered @ beta_2d
+            residual_2d = y_2d - signal_2d
+        else:
+            for i in range(n_space):
+                yi = y_2d[:, i]
+                valid = ~np.isnan(yi)
+                if np.sum(valid) <= x_centered.shape[1]:
+                    continue
+
+                yi_mean = np.nanmean(yi)
+                yi_centered = yi - yi_mean
+                beta_i = np.linalg.lstsq(x_centered[valid, :], yi_centered[valid], rcond=None)[0]
+                signal_2d[:, i] = x_centered @ beta_i
+                beta_2d[:, i] = beta_i
+
+            residual_2d = y_2d - signal_2d
+
+        signal = signal_2d.reshape(y_shape)
+        residual = residual_2d.reshape(y_shape)
+        beta = beta_2d.reshape((x_centered.shape[1],) + y_shape[1:])
 
     return residual, signal, beta
 
@@ -1080,6 +1124,51 @@ def remove_trailing_mean(data, window=120):
     filtered[window:] = data[window:] - trailing_mean
 
     return filtered
+
+
+def crox_corr(Serie_a, Serie_b, lag=10):
+    import numpy as np
+    from scipy.stats import pearsonr
+
+    serie_a = np.asarray(Serie_a, dtype=float).ravel()
+    serie_b = np.asarray(Serie_b, dtype=float).ravel()
+
+    if lag < 0:
+        raise ValueError('lag must be >= 0')
+
+    # Align lengths first so lag slicing is consistent.
+    n = min(len(serie_a), len(serie_b))
+    serie_a = serie_a[:n]
+    serie_b = serie_b[:n]
+
+    lags = np.arange(-lag, lag + 1, dtype=int)
+    corr = np.full(lags.shape, np.nan, dtype=float)
+
+    for idx, lag in enumerate(lags):
+        if lag < 0:
+            x = serie_a[-lag:]
+            y = serie_b[:n + lag]
+        elif lag > 0:
+            x = serie_a[:n - lag]
+            y = serie_b[lag:]
+        else:
+            x = serie_a
+            y = serie_b
+
+        valid = np.isfinite(x) & np.isfinite(y)
+        if valid.sum() < 2:
+            continue
+
+        x_valid = x[valid]
+        y_valid = y[valid]
+
+        # Pearson is undefined for constant inputs.
+        if np.std(x_valid) == 0 or np.std(y_valid) == 0:
+            continue
+
+        corr[idx] = pearsonr(x_valid, y_valid)[0]
+
+    return lags, corr
 
 if __name__ == "__main__":
     # Example usage or test cases can be added here

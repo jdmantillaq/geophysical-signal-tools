@@ -175,7 +175,7 @@ def run_mk_on_grid(data_array, eps=1e-4, alpha=0.01,
     If ``detrend=True``, includes a ``detrended`` variable in the output
     dataset with the linear trend removed at each grid point.
     """
-    trend_flag, z_mk, slope = xr.apply_ufunc(
+    trend_flag, z_mk, slope_step = xr.apply_ufunc(
         mk_test,
         data_array,
         input_core_dims=[[time_dim]],
@@ -188,6 +188,24 @@ def run_mk_on_grid(data_array, eps=1e-4, alpha=0.01,
 
     in_units = data_array.attrs.get("units")
     in_long_name = data_array.attrs.get("long_name", data_array.name)
+
+    delta_time, _, time_step_unit = infer_time_step_info(data_array[time_dim])
+    if delta_time is not None and delta_time.total_seconds() > 0:
+        seconds_per_decade = 365.25 * 24.0 * 3600.0 * 10.0
+        steps_per_decade = seconds_per_decade / delta_time.total_seconds()
+        slope = slope_step * steps_per_decade
+        slope_units = f"{in_units} / decade" if in_units else "1 / decade"
+        slope_desc = (
+            "Least-squares slope"
+            # f"(converted from {time_step_unit or time_dim} steps)"
+        )
+    else:
+        slope = slope_step
+        slope_units = (
+            f"{in_units} / {time_step_unit}" if (in_units and time_step_unit)
+            else (f"{in_units} / {time_dim}_step" if in_units else f"1 / {time_dim}_step")
+        )
+        slope_desc = f"Least-squares slope per {time_step_unit or time_dim} step"
 
     ds_out = xr.Dataset(
         {
@@ -207,18 +225,17 @@ def run_mk_on_grid(data_array, eps=1e-4, alpha=0.01,
         "long_name": "Mann-Kendall Z statistic",
     }
 
-    _, _, time_step_unit = infer_time_step_info(data_array[time_dim])
     ds_out["slope"].attrs = {
         "long_name": "Linear trend slope",
-        "description": f"Least-squares slope per {time_step_unit or time_dim} step",
-        "units": f"{in_units} / {time_step_unit}" if (in_units and time_step_unit) else (f"{in_units} / {time_dim}_step" if in_units else f"1 / {time_dim}_step"),
+        "description": slope_desc,
+        "units": slope_units,
     }
 
     if detrend:
         detrended = xr.apply_ufunc(
             detrend_1d_with_slope,
             data_array,
-            slope,
+            slope_step,
             input_core_dims=[[time_dim], []],
             output_core_dims=[[time_dim]],
             vectorize=True,
