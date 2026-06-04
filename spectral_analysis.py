@@ -1170,6 +1170,67 @@ def crox_corr(Serie_a, Serie_b, lag=10):
 
     return lags, corr
 
+
+def lag_corr_by_month(x, y, cal_months, lag, month=12, alpha=0.05,
+                      min_pairs=10):
+    """Lag cross-correlation stratified by calendar month.
+
+    Computes ``r(m, L) = pearsonr(x[t ∈ month m], y[t + L])`` for every
+    combination of calendar month *m* and lag *L*.
+
+    Parameters
+    ----------
+    x, y :
+        1-D arrays of equal length representing the two time series.
+    cal_months :
+        Integer month labels (1-12) aligned with *x* and *y*.
+    lags :
+        Signed integer lag offsets (in time steps) to evaluate.
+    months :
+        Calendar months to stratify by; defaults to 1-12.
+    alpha :
+        Significance level for the masked output matrix.
+    min_pairs :
+        Minimum number of finite, in-bounds pairs required before a
+        correlation is computed; cells below this threshold stay NaN.
+
+    Returns
+    -------
+    lags :
+        Signed integer lag offsets (in time steps) evaluated.
+    r_mat :
+        ``(n_months, n_lags)`` Pearson correlation matrix.
+    p_mat :
+        ``(n_months, n_lags)`` two-sided p-value matrix.
+    r_sig :
+        Copy of *r_mat* with cells where ``p >= alpha`` set to NaN.
+    """
+    import numpy as np
+    from scipy.stats import pearsonr
+    
+    lags = np.arange(-lag, lag + 1, dtype=int)
+    months = np.arange(1, month + 1)
+    n = len(x)
+    r_mat = np.full((len(months), len(lags)), np.nan)
+    p_mat = np.full((len(months), len(lags)), np.nan)
+
+    for i, m in enumerate(months):
+        idx_m = np.where(cal_months == m)[0]          # all Januaries, etc.
+
+        # Broadcast once: shape (n_m, n_lags) — avoids recomputing per lag.
+        idx_lag  = idx_m[:, None] + lags[None, :]
+        in_bounds = (idx_lag >= 0) & (idx_lag < n)
+
+        for j in range(len(lags)):
+            ok = in_bounds[:, j]
+            xi, yi = x[idx_m[ok]], y[idx_lag[ok, j]]
+            valid = np.isfinite(xi) & np.isfinite(yi)
+            if valid.sum() >= min_pairs:
+                r_mat[i, j], p_mat[i, j] = pearsonr(xi[valid], yi[valid])
+
+    r_sig = np.where(p_mat < alpha, r_mat, np.nan)
+    return lags,r_mat, p_mat, r_sig
+
 if __name__ == "__main__":
     # Example usage or test cases can be added here
     import numpy as np

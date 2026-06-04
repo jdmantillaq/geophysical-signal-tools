@@ -1,3 +1,8 @@
+
+import numpy as np
+import scipy.linalg as la
+
+
 def eof_decomposition(data):
     """
     Computes Empirical Orthogonal Functions (EOFs) from the given data.
@@ -13,8 +18,6 @@ def eof_decomposition(data):
                                             the original dimensions
     - var_exp (1D array): Variance explained by each mode
     """
-    import numpy as np
-    import scipy.linalg as la
 
     # Verify if input data is numpy array or xarray object
     if not isinstance(data, np.ndarray):
@@ -98,7 +101,6 @@ def project_onto_eofs(data, vec_prop):
     - ValueError: If the time dimensions of the input data and
                 eigenvectors do not match.
     """
-    import numpy as np
 
     # Verify if input data is numpy array or xarray object
     if not isinstance(data, np.ndarray):
@@ -142,3 +144,119 @@ def project_onto_eofs(data, vec_prop):
     eof = eof.reshape(ntime, nlat, nlon)
 
     return eof
+
+
+def build_lagged_matrix(data_matrix, max_lag):
+    '''
+    Build the time-lag augmented matrix used for Extended EOF analysis.
+
+    Given a 2D (time, space) matrix, this returns a matrix where each row
+    contains the original spatial map concatenated with its lagged copies,
+    so the resulting shape is (time - max_lag, space * (max_lag + 1)).
+    '''
+    n_time, n_space = data_matrix.shape
+
+    lagged_matrix = np.zeros(
+        (n_time - max_lag, n_space * (max_lag + 1))) * np.nan
+
+    for i in range(max_lag + 1):
+        if (max_lag - i) != 0:
+            lagged_matrix[:, i*n_space: i*n_space +
+                          n_space] = data_matrix[i:i - max_lag, :]
+        else:
+            lagged_matrix[:, i*n_space: i*n_space +
+                          n_space] = data_matrix[i:, :]
+
+    return lagged_matrix
+
+
+def compute_eeof(data_3d, data_matrix, max_lag):
+    """
+    Compute Time-Extended Empirical Orthogonal Functions (EEOF).
+
+    Usage:
+    ------
+    MAX_LAG = 12
+
+    # Get the shape of the anomalies
+    n_time, n_lat, n_lon = anomalies.shape
+
+    data_matrix = anomalies.reshape(n_time, n_lat*n_lon)
+    print(f"data_matrix   shape: (time={data_matrix.shape[0]}, space={data_matrix.shape[1]})")
+
+
+    lagged_matrix = build_lagged_matrix(data_matrix, MAX_LAG)
+    print(f"lagged_matrix shape: (time={lagged_matrix.shape[0]}, space={lagged_matrix.shape[1]})")
+
+
+    eigenvalues, eigenvectors, eeofs, variance_explained = \
+        compute_eeof(anomalies, data_matrix, MAX_LAG)
+
+    Parameters
+    ----------
+    data_3d : ndarray
+        Original 3D data array with shape (time, lat, lon). Used only to
+        recover the spatial shape when reshaping the EOFs.
+    data_matrix : ndarray
+        2D (time, space) matrix obtained by reshaping `data_3d`.
+    max_lag : int
+        Maximum lag (in time steps) used to build the augmented matrix.
+        The number of lag blocks is `max_lag + 1`.
+
+    Returns
+    -------
+    eigenvalues : ndarray
+        Eigenvalues of the covariance matrix.
+    eigenvectors : ndarray
+        Eigenvectors (principal components in time) of the covariance matrix.
+    eeof_reshaped : ndarray
+        EEOF spatial patterns with shape (max_lag + 1, n_modes, lat, lon).
+    variance_explained : ndarray
+        Percentage of variance explained by each oscillation mode.
+    """
+
+    lagged_matrix = build_lagged_matrix(data_matrix, max_lag)
+
+    nan_indices = np.where(np.isnan(lagged_matrix[0]))
+
+    lagged_matrix_no_nan = np.delete(lagged_matrix, nan_indices, 1)
+
+    cov_matrix = np.dot(lagged_matrix_no_nan, lagged_matrix_no_nan.T)
+
+    eigenvalues, eigenvectors = la.eig(cov_matrix)
+
+    total_variance = np.sum(eigenvalues)
+
+    variance_explained = (eigenvalues / total_variance) * 100
+
+    # Project eigenvectors onto the data to obtain the EOF spatial patterns
+    eof_modes = np.dot(eigenvectors.T, lagged_matrix_no_nan)
+
+    eof_with_nan = np.copy(lagged_matrix) * np.nan
+
+    all_space_indices = np.arange(lagged_matrix.shape[1])
+    valid_indices = np.setdiff1d(all_space_indices, nan_indices)
+
+    eof_with_nan[:, valid_indices] = eof_modes
+
+    eof_modes = eof_with_nan
+
+    n_modes, n_space_total = eof_modes.shape
+
+    eeof_reshaped = [np.copy(data_3d) * np.nan] * (max_lag + 1)
+
+    # Split the EOF matrix into its lag blocks
+    n_space_per_lag = int(n_space_total / (max_lag + 1))
+    eof_split = np.zeros((max_lag + 1, n_modes, n_space_per_lag)) * np.nan
+
+    for i in range(max_lag + 1):
+        eof_split[i, :, :] = eof_modes[:, i *
+                                       n_space_per_lag: (i + 1)*n_space_per_lag]
+
+    for i in range(max_lag + 1):
+        eeof_reshaped[i] = eof_split[i, :, :].reshape(
+            data_3d.shape[0] - max_lag, data_3d.shape[1], data_3d.shape[2])
+
+    eeof_reshaped = np.array(eeof_reshaped)
+
+    return eigenvalues, eigenvectors, eeof_reshaped, variance_explained
