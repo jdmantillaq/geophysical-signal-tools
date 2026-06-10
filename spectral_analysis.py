@@ -1291,8 +1291,9 @@ def fourier_phase_randomize(x, rng=None):
     if not np.all(np.isfinite(x)):
         raise ValueError("Series must not contain NaN or inf values.")
 
-    X = np.fft.fft(x)
-    P = (X * X.conj()).real  # |X_k|^2 (exact per-bin power)
+    X = np.fft.fft(x) # X: coefficients of the DFT
+    P = (X * X.conj()).real  # P: Power
+    # |X_k|^2 (exact per-bin power)
 
     n_half = n // 2
     pos_k = np.arange(1, n_half)  # 1, 2, ..., n_half-1 (excludes DC and Nyquist)
