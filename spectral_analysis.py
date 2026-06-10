@@ -1231,6 +1231,226 @@ def lag_corr_by_month(x, y, cal_months, lag, month=12, alpha=0.05,
     r_sig = np.where(p_mat < alpha, r_mat, np.nan)
     return lags,r_mat, p_mat, r_sig
 
+
+def fourier_phase_randomize(x, rng=None):
+    """Generate one Fourier-phase-randomized surrogate of a real series.
+
+    Implements the Roundy / Nolan (1990s) phase-randomization recipe.  The
+    surrogate has the **same per-frequency power spectrum** as ``x`` (hence
+    the same autocorrelation function and the same broadband decadal
+    energy), but its phases are randomized.  Use it as the null distribution
+    for trend significance tests on autocorrelated geophysical series where
+    pointwise-independence tests (e.g. Mann-Kendall) are inappropriate.
+
+    Algorithm
+    ---------
+    Let :math:`\\hat X_k = a_k + i b_k` be the DFT of ``x`` and
+    :math:`P_k = a_k^2 + b_k^2`.  For each positive frequency
+    :math:`0 < k < N/2`:
+
+    1. Draw :math:`u_k \\sim \\mathcal{U}(0, P_k)`.
+    2. Set :math:`|a_k| = \\sqrt{u_k}` and :math:`|b_k| = \\sqrt{P_k - u_k}`.
+    3. Draw independent random signs for :math:`a_k` and :math:`b_k`.
+
+    The surrogate spectrum is then made conjugate-symmetric
+    (:math:`\\tilde X_{N-k} = \\overline{\\tilde X_k}`) so the inverse DFT is
+    real-valued.  The DC bin is preserved (so the surrogate has the same
+    mean as ``x``) and, for even ``N``, the Nyquist bin is kept real with a
+    random sign.
+
+    Parameters
+    ----------
+    x : array-like, 1D
+        Real-valued input series.  NaNs are not allowed.
+    rng : numpy.random.Generator, optional
+        Random generator.  Defaults to ``numpy.random.default_rng()``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Surrogate of the same length as ``x`` with identical per-frequency
+        power spectrum.
+
+    Notes
+    -----
+    Because :math:`u_k` is uniform on :math:`[0, P_k]`, the resulting phase
+    distribution at each frequency is **not** uniform on the circle (it is
+    concentrated near the real/imaginary axes).  This is intentional — it
+    is the variant Roundy has published.  The per-frequency power is
+    preserved exactly, which is what matters for the trend-significance
+    null hypothesis.
+    """
+    import numpy as np
+    if rng is None:
+        rng = np.random.default_rng()
+
+    x = np.asarray(x, dtype=float).ravel()
+    n = x.size
+    if n < 4:
+        raise ValueError("Series must have at least 4 samples.")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("Series must not contain NaN or inf values.")
+
+    X = np.fft.fft(x)
+    P = (X * X.conj()).real  # |X_k|^2 (exact per-bin power)
+
+    n_half = n // 2
+    pos_k = np.arange(1, n_half)  # 1, 2, ..., n_half-1 (excludes DC and Nyquist)
+    
+    # Excludes DC and Nyquist bins
+    # DC bin represents the constant or mean-level shift in a signal 
+    # (zero Hertz frequency)
+    # Nyquist bin represents the highest frequency component in a signal 
+    # (half the sampling rate)
+
+    # Uniformly distributed random numbers between 0 and 1 multiplied by the power spectrum
+    u = rng.uniform(0.0, 1.0, size=pos_k.size) * P[pos_k]
+    a_mag = np.sqrt(np.maximum(u, 0.0))
+    b_mag = np.sqrt(np.maximum(P[pos_k] - u, 0.0))
+    
+    # Randomly sample the signs of the real and imaginary parts of the complex number
+    sa = rng.choice([-1.0, 1.0], size=pos_k.size) # sign of the real part
+    sb = rng.choice([-1.0, 1.0], size=pos_k.size) # sign of the imaginary part
+    X_pos = sa * a_mag + 1j * sb * b_mag # complex number
+
+    X_tilde = np.zeros(n, dtype=complex) # complex number
+    X_tilde[0] = X[0] # DC bin
+    X_tilde[pos_k] = X_pos # positive k bins
+    X_tilde[n - pos_k] = np.conj(X_pos) # negative k bins
+    if n % 2 == 0:
+        s_nyq = rng.choice([-1.0, 1.0])
+        X_tilde[n_half] = s_nyq * np.sqrt(P[n_half]) # Nyquist bin
+
+    return np.fft.ifft(X_tilde).real # real part of the inverse DFT
+
+
+def bootstrap_trend_null(x, n_surrogates=1000, rng=None, detrend=True,
+                         progress=False):
+    """Null distribution of linear-trend slopes via Fourier-phase surrogates.
+
+    Each surrogate has the same power spectrum as ``x`` (so the same
+    autocorrelation structure and the same broadband ENSO-like energy), but
+    randomized phases.  Fitting a linear trend to each surrogate gives the
+    distribution of slopes producible by internal variability with the
+    observed spectral fingerprint under no genuine forcing.
+
+    Parameters
+    ----------
+    x : array-like, 1D
+        Observed time series.
+    n_surrogates : int, default 1000
+        Number of Fourier-phase surrogates.
+    rng : numpy.random.Generator, optional
+        Random generator.
+    detrend : bool, default True
+        If True (recommended), the linear trend of ``x`` is removed before
+        the FFT used as the spectral source for the surrogates.  Without
+        this, the deterministic linear-trend energy leaks into the
+        low-frequency surrogate spectrum and inflates the null variance.
+    progress : bool, default False
+        If True, wrap the loop in ``tqdm``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array of length ``n_surrogates`` giving the slope (per time step)
+        of a linear least-squares fit to each surrogate.
+    """
+    import numpy as np
+    from scipy.stats import linregress
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    x = np.asarray(x, dtype=float).ravel()
+    n = x.size
+    t = np.arange(n, dtype=float)
+
+    if detrend:
+        slope, intercept, *_ = linregress(t, x)
+        x_source = x - (slope * t + intercept)
+    else:
+        x_source = x - x.mean()
+
+    iterator = range(n_surrogates)
+    if progress:
+        try:
+            from tqdm import tqdm
+            iterator = tqdm(iterator, desc='Fourier-phase bootstrap')
+        except ImportError:
+            pass
+
+    null_slopes = np.empty(n_surrogates, dtype=float)
+    for i in iterator:
+        surr = fourier_phase_randomize(x_source, rng=rng)
+        s, _, _, _, _ = linregress(t, surr)
+        null_slopes[i] = s
+    return null_slopes
+
+
+def bootstrap_trend_significance(x, n_surrogates=1000, alpha=0.05, rng=None,
+                                 detrend_source=True, progress=False):
+    """Trend slope significance test via Fourier-phase-randomization.
+
+    Compares the linear-trend slope of ``x`` against the empirical null
+    distribution produced by ``bootstrap_trend_null``.  Suitable for
+    autocorrelated geophysical series (e.g. ENSO indices) where Mann-Kendall
+    is unreliable because pointwise independence does not hold.
+
+    Parameters
+    ----------
+    x : array-like, 1D
+        Observed series.
+    n_surrogates : int, default 1000
+        Number of Fourier-phase surrogates.
+    alpha : float, default 0.05
+        Significance level; the returned CI is ``[alpha/2, 1-alpha/2]``.
+    rng : numpy.random.Generator, optional
+    detrend_source : bool, default True
+        Passed through to ``bootstrap_trend_null`` (see notes there).
+    progress : bool, default False
+
+    Returns
+    -------
+    dict
+        ``slope_observed`` (per time-step), ``intercept_observed``,
+        ``null_slopes`` (array, shape ``(n_surrogates,)``),
+        ``ci_low``, ``ci_high`` at the requested two-sided level,
+        ``p_two_sided`` (rank-based, with +1 smoothing),
+        ``n_surrogates``, ``alpha``.
+    """
+    import numpy as np
+    from scipy.stats import linregress
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    x = np.asarray(x, dtype=float).ravel()
+    n = x.size
+    t = np.arange(n, dtype=float)
+    slope_obs, intercept_obs, *_ = linregress(t, x)
+
+    # Generate the null distribution of slopes
+    null = bootstrap_trend_null(x, n_surrogates=n_surrogates, rng=rng,
+                                detrend=detrend_source, progress=progress)
+
+    # Two-sided exceedance p-value with +1 smoothing (Davison & Hinkley)
+    p_two = (np.sum(np.abs(null) >= abs(slope_obs)) + 1.0) / (n_surrogates + 1.0)
+    # Two-sided confidence interval at the requested significance level
+    ci_low, ci_high = np.quantile(null, [alpha / 2.0, 1.0 - alpha / 2.0])
+
+    return {
+        'slope_observed':    float(slope_obs),
+        'intercept_observed': float(intercept_obs),
+        'null_slopes':       null,
+        'ci_low':            float(ci_low),
+        'ci_high':           float(ci_high),
+        'p_two_sided':       float(p_two),
+        'n_surrogates':      int(n_surrogates),
+        'alpha':             float(alpha),
+    }
+
+
 if __name__ == "__main__":
     # Example usage or test cases can be added here
     import numpy as np
